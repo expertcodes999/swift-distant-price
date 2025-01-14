@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { venueStaticSchema, venueDynamicSchema } from '../types/api.types'
 import type { VenueStatic, VenueDynamic } from '../types/api.types'
 
@@ -7,7 +8,12 @@ export class WoltApiClient {
   constructor(private readonly fetcher = fetch) {}
 
   private async request<T>(endpoint: string, schema: z.ZodSchema<T>): Promise<T> {
-    const response = await this.fetcher(`${this.baseUrl}${endpoint}`)
+    const response = await this.fetcher(`${this.baseUrl}${endpoint}`, {
+      mode: 'cors',
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    })
     
     if (!response.ok) {
       throw new Error(`API Error: ${response.status} - ${response.statusText}`)

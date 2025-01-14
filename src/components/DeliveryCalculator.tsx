@@ -11,21 +11,21 @@ import { WoltApiClient, calculateDistance, calculateDeliveryPrice } from '../api
 
 const calculatorSchema = z.object({
   venueSlug: z.string().min(1, "Venue slug is required"),
-  cartValue: z.string().transform(val => Number(val)),
-  latitude: z.string().transform(val => Number(val)),
-  longitude: z.string().transform(val => Number(val)),
+  cartValue: z.number().min(0),
+  latitude: z.number(),
+  longitude: z.number(),
 });
 
 type CalculatorInput = z.infer<typeof calculatorSchema>;
 
 const DeliveryCalculator = () => {
-  const { register, handleSubmit, setValue, watch } = useForm<CalculatorInput>({
+  const { register, handleSubmit, setValue, formState: { errors } } = useForm<CalculatorInput>({
     resolver: zodResolver(calculatorSchema),
     defaultValues: {
       venueSlug: 'home-assignment-venue-helsinki',
-      cartValue: '10',
-      latitude: '60.17094',
-      longitude: '24.93087',
+      cartValue: 10,
+      latitude: 60.17094,
+      longitude: 24.93087,
     }
   });
 
@@ -48,7 +48,7 @@ const DeliveryCalculator = () => {
       
       const distance = calculateDistance(
         venueData.coordinates,
-        [data.longitude, data.latitude]
+        [data.longitude, data.latitude] as [number, number]
       );
 
       const deliveryFee = calculateDeliveryPrice(
@@ -83,6 +83,7 @@ const DeliveryCalculator = () => {
         description: "Delivery price has been calculated successfully",
       });
     } catch (error) {
+      console.error('API Error:', error);
       toast({
         variant: "destructive",
         title: "Error",

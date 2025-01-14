@@ -20,6 +20,7 @@ const distanceRangeSchema = z.object({
   flag: z.null()
 })
 
+// Static Venue Schema
 export const venueStaticSchema = z.object({
   venue_raw: z.object({
     id: z.string(),
@@ -36,6 +37,7 @@ export const venueStaticSchema = z.object({
   deliveryMethods: data.venue_raw.delivery_methods
 }))
 
+// Dynamic Venue Schema
 export const venueDynamicSchema = z.object({
   venue_raw: z.object({
     delivery_specs: z.object({

@@ -1,90 +1,95 @@
 import { useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/components/ui/use-toast";
 import { Loader2 } from "lucide-react";
+import { WoltApiClient, calculateDistance, calculateDeliveryPrice } from '../api/WoltApiClient';
 
-interface CalculatorState {
-  cartValue: string;
-  deliveryDistance: string;
-  numberOfItems: string;
-  time: string;
-  lat?: number;
-  lng?: number;
-}
+const calculatorSchema = z.object({
+  venueSlug: z.string().min(1, "Venue slug is required"),
+  cartValue: z.string().transform(val => Number(val)),
+  latitude: z.string().transform(val => Number(val)),
+  longitude: z.string().transform(val => Number(val)),
+});
+
+type CalculatorInput = z.infer<typeof calculatorSchema>;
 
 const DeliveryCalculator = () => {
-  const [state, setState] = useState<CalculatorState>({
-    cartValue: '',
-    deliveryDistance: '',
-    numberOfItems: '',
-    time: new Date().toISOString().slice(0, 16),
+  const { register, handleSubmit, setValue, watch } = useForm<CalculatorInput>({
+    resolver: zodResolver(calculatorSchema),
+    defaultValues: {
+      venueSlug: 'home-assignment-venue-helsinki',
+      cartValue: '10',
+      latitude: '60.17094',
+      longitude: '24.93087',
+    }
   });
+
   const [loading, setLoading] = useState(false);
+  const [priceBreakdown, setPriceBreakdown] = useState<{
+    cartValue: number;
+    deliveryFee: number;
+    distance: number;
+    smallOrderSurcharge: number;
+    total: number;
+  } | null>(null);
+  
   const { toast } = useToast();
+  const api = new WoltApiClient();
 
-  const calculateDeliveryPrice = () => {
-    const cartValue = parseFloat(state.cartValue);
-    const distance = parseFloat(state.deliveryDistance);
-    const items = parseInt(state.numberOfItems);
-    const orderTime = new Date(state.time);
-    
-    // Base delivery fee is 2€
-    let deliveryFee = 2;
-    
-    // Small order surcharge
-    if (cartValue < 10) {
-      deliveryFee += (10 - cartValue);
-    }
-    
-    // Distance fee
-    if (distance > 1000) {
-      deliveryFee += 2;
-      const additionalDistance = Math.ceil((distance - 1000) / 500);
-      deliveryFee += additionalDistance;
-    }
-    
-    // Bulk fee
-    if (items >= 5) {
-      deliveryFee += (items - 4) * 0.5;
-      if (items > 12) {
-        deliveryFee += 1.2;
-      }
-    }
-    
-    // Rush hour fee (Friday 15-19)
-    const isFriday = orderTime.getDay() === 5;
-    const hour = orderTime.getHours();
-    if (isFriday && hour >= 15 && hour < 19) {
-      deliveryFee *= 1.2;
-    }
-    
-    // Maximum fee is 15€
-    deliveryFee = Math.min(15, deliveryFee);
-    
-    // Free delivery for cart value >= 100€
-    if (cartValue >= 100) {
-      deliveryFee = 0;
-    }
-    
-    return deliveryFee.toFixed(2);
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const onSubmit = async (data: CalculatorInput) => {
+    setLoading(true);
     try {
-      const result = calculateDeliveryPrice();
+      const venueData = await api.getVenueFullData(data.venueSlug);
+      
+      const distance = calculateDistance(
+        venueData.coordinates,
+        [data.longitude, data.latitude]
+      );
+
+      const deliveryFee = calculateDeliveryPrice(
+        distance,
+        venueData.distanceRanges,
+        venueData.baseDeliveryPrice
+      );
+
+      if (deliveryFee === null) {
+        toast({
+          variant: "destructive",
+          title: "Error",
+          description: "Delivery not possible to this location",
+        });
+        return;
+      }
+
+      const smallOrderSurcharge = data.cartValue < venueData.minimumOrderValue 
+        ? venueData.minimumOrderValue - data.cartValue 
+        : 0;
+
+      setPriceBreakdown({
+        cartValue: data.cartValue,
+        deliveryFee,
+        distance,
+        smallOrderSurcharge,
+        total: data.cartValue + deliveryFee + smallOrderSurcharge,
+      });
+
       toast({
-        title: "Delivery Fee Calculated",
-        description: `The delivery fee is €${result}`,
+        title: "Price Calculated",
+        description: "Delivery price has been calculated successfully",
       });
     } catch (error) {
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Please check your input values",
+        description: error instanceof Error ? error.message : "Failed to calculate price",
       });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -93,11 +98,8 @@ const DeliveryCalculator = () => {
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
-          setState(prev => ({
-            ...prev,
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-          }));
+          setValue('latitude', String(position.coords.latitude));
+          setValue('longitude', String(position.coords.longitude));
           toast({
             title: "Location Updated",
             description: "Your current location has been set",
@@ -127,95 +129,101 @@ const DeliveryCalculator = () => {
     <Card className="w-full max-w-md p-6 space-y-6">
       <h1 className="text-2xl font-bold text-center">Delivery Price Calculator</h1>
       
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+        <div className="space-y-2">
+          <label htmlFor="venue-slug" className="block text-sm font-medium">
+            Venue slug
+          </label>
+          <Input
+            id="venue-slug"
+            {...register('venueSlug')}
+            className="w-full"
+          />
+        </div>
+
         <div className="space-y-2">
           <label htmlFor="cart-value" className="block text-sm font-medium">
-            Cart Value (€)
+            Cart value (EUR)
           </label>
           <Input
             id="cart-value"
-            data-test-id="cart-value"
             type="number"
             step="0.01"
-            min="0"
-            value={state.cartValue}
-            onChange={(e) => setState(prev => ({ ...prev, cartValue: e.target.value }))}
-            required
+            {...register('cartValue')}
             className="w-full"
           />
         </div>
 
         <div className="space-y-2">
-          <label htmlFor="delivery-distance" className="block text-sm font-medium">
-            Delivery Distance (meters)
+          <label htmlFor="latitude" className="block text-sm font-medium">
+            User latitude
           </label>
           <Input
-            id="delivery-distance"
-            data-test-id="delivery-distance"
+            id="latitude"
             type="number"
-            min="0"
-            value={state.deliveryDistance}
-            onChange={(e) => setState(prev => ({ ...prev, deliveryDistance: e.target.value }))}
-            required
+            step="any"
+            {...register('latitude')}
             className="w-full"
           />
         </div>
 
         <div className="space-y-2">
-          <label htmlFor="number-of-items" className="block text-sm font-medium">
-            Number of Items
+          <label htmlFor="longitude" className="block text-sm font-medium">
+            User longitude
           </label>
           <Input
-            id="number-of-items"
-            data-test-id="amount-of-items"
+            id="longitude"
             type="number"
-            min="1"
-            value={state.numberOfItems}
-            onChange={(e) => setState(prev => ({ ...prev, numberOfItems: e.target.value }))}
-            required
+            step="any"
+            {...register('longitude')}
             className="w-full"
           />
         </div>
 
-        <div className="space-y-2">
-          <label htmlFor="time" className="block text-sm font-medium">
-            Order Time
-          </label>
-          <Input
-            id="time"
-            data-test-id="time"
-            type="datetime-local"
-            value={state.time}
-            onChange={(e) => setState(prev => ({ ...prev, time: e.target.value }))}
-            required
-            className="w-full"
-          />
-        </div>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={getCurrentLocation}
+          className="w-full"
+          disabled={loading}
+        >
+          {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          Get Current Location
+        </Button>
 
-        <div className="space-y-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={getCurrentLocation}
-            className="w-full"
-            disabled={loading}
-          >
-            {loading ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : null}
-            Get Current Location
-          </Button>
-          {state.lat && state.lng && (
-            <p className="text-sm text-muted-foreground text-center">
-              Location: {state.lat.toFixed(6)}, {state.lng.toFixed(6)}
-            </p>
-          )}
-        </div>
-
-        <Button type="submit" className="w-full">
+        <Button type="submit" className="w-full" disabled={loading}>
+          {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           Calculate Delivery Price
         </Button>
       </form>
+
+      {priceBreakdown && (
+        <div className="mt-6 space-y-2">
+          <h2 className="text-xl font-semibold">Price Breakdown</h2>
+          <div className="space-y-1">
+            <div className="flex justify-between">
+              <span>Cart Value</span>
+              <span>{priceBreakdown.cartValue.toFixed(2)} €</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Delivery Fee</span>
+              <span>{priceBreakdown.deliveryFee.toFixed(2)} €</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Delivery Distance</span>
+              <span>{priceBreakdown.distance} m</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Small Order Surcharge</span>
+              <span>{priceBreakdown.smallOrderSurcharge.toFixed(2)} €</span>
+            </div>
+            <div className="flex justify-between font-bold">
+              <span>Total Price</span>
+              <span>{priceBreakdown.total.toFixed(2)} €</span>
+            </div>
+          </div>
+        </div>
+      )}
     </Card>
   );
 };

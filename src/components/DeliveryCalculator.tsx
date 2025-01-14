@@ -46,9 +46,10 @@ const DeliveryCalculator = () => {
     try {
       const venueData = await api.getVenueFullData(data.venueSlug);
       
+      const coordinates: [number, number] = [data.longitude, data.latitude];
       const distance = calculateDistance(
         venueData.coordinates,
-        [data.longitude, data.latitude] as [number, number]
+        coordinates
       );
 
       const deliveryFee = calculateDeliveryPrice(
@@ -99,8 +100,8 @@ const DeliveryCalculator = () => {
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
-          setValue('latitude', String(position.coords.latitude));
-          setValue('longitude', String(position.coords.longitude));
+          setValue('latitude', position.coords.latitude);
+          setValue('longitude', position.coords.longitude);
           toast({
             title: "Location Updated",
             description: "Your current location has been set",
